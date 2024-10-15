@@ -11,10 +11,22 @@
 #include <chrono>
 #include <memory>
 #include <condition_variable>
+#include <random>
 
 #include <windows.h> // Sleep to not automatically complete the tasks
 
 // NOTE: all to-dos are related to MO1
+
+/*
+*  Listing down to-dos because i'm getting confused lol
+*   initialize command -> integrate config to code
+*           scheduler + quantum-cycles-> integrate roundrobin algorithm 
+*   screen -s -> process-smi + user should not be able to access the process after its finished execution
+*   report-util -> save this into a text file "csopesy-log.txt"
+*   screen -ls -> we have this already, maybe clean up lang with the printing (no running processes chuchu)
+* 
+*  TO CHANGE: cpu cycle related stuff, i don't know if it's good enough?
+*/
 
 using namespace std;
 class Core;
@@ -25,6 +37,16 @@ class Schedule;
 void clearScreen(bool print_header = true);
 string getCurrentTimestamp();
 void printHeader();
+
+int cpuCycles = 0; // to use modulo
+
+
+void simulateCpuCycle()
+{
+    while (true) {
+        cpuCycles++;
+    }
+}
 
 class Screen {
 public:
@@ -44,7 +66,7 @@ public:
     int total_line_instr;
     int core_id_assigned = -1;
 
-    //--------------- unused part/irrelevant for fcfs scheduler
+    //--------------- unused part
     enum Command {
         PRINT
     };
@@ -98,7 +120,8 @@ public:
     }
 
     // ------------- to change after fcfs scheduler hw
-    int executePrintCommand() {
+    // as of the moment, commands may need to be interrupted 
+    int executeCommand() {
         status = RUNNING;
         ofstream processFile(process_name + ".txt");
 
@@ -124,23 +147,33 @@ public:
 class Core {
 public:
     int id;
+    int cycle;
+    int delay;
     shared_ptr<Screen> process_to_execute = nullptr;
     std::mutex mtx;
     std::condition_variable cv;
 
-    Core(int id) : id(id) {}
+    Core(int id, int delay) : id(id), delay(delay) {}
 
     void running_core() {
+        // TO DO: To synchronize with other cores
         std::unique_lock<std::mutex> lock(mtx);
-
+        
         while (true) {
             cv.wait(lock, [this]() { return process_to_execute != nullptr; });
 
-            if (process_to_execute->executePrintCommand() == 0) {
-                process_to_execute = nullptr;
+            cycle = cpuCycles;
 
-                cv.notify_all();
+            if ((cpuCycles - cycle) % delay == 0)
+            {
+                if (process_to_execute->executeCommand() == 0) {
+                    process_to_execute = nullptr; // change this part
+
+                    cv.notify_all();
+                }
             }
+            
+            
         }
     }
 };
@@ -151,19 +184,38 @@ public:
     vector<shared_ptr<Screen>> readyQueue;
     std::thread running_thread;
 
-    Schedule() {
-        running_thread = std::thread(&Schedule::run_schedule, this);
-        running_thread.detach();
+    int quantumCycle = -1;
+
+
+    Schedule() {}
+
+    int initialize_scheduler(string algoSelected) // to check if input was valid
+    {
+        algoSelected = algoSelected.substr(1, algoSelected.length() - 2);
+
+        if (algoSelected == "fcfs")
+        {
+            running_thread = std::thread(&Schedule::run_fcfs, this);
+            running_thread.detach();
+            return 0;
+        }
+        else if (algoSelected == "rr")
+        {
+            running_thread = std::thread(&Schedule::run_rr, this);
+            running_thread.detach();
+            return 0;
+        }
+        else
+        {
+            return 1;
+        }
     }
 
-    void run_schedule() {
+    void run_fcfs() {
         while (true) {
-            //std::cout << "Checking readyQueue size: " << readyQueue.size() << std::endl; // Debugging for queue
 
             if (!readyQueue.empty()) {
                 for (auto& core : coresAvailable) {
-                   
-                    // std::cout << "Checking Core " << core->id << std::endl; // Debugging for core
                     // Check if the core is free
                     if (core->process_to_execute == nullptr) {
                         std::unique_lock<std::mutex> lock(core->mtx); 
@@ -172,19 +224,35 @@ public:
 
                         // Update the process's core ID
                         core->process_to_execute->core_id_assigned = core->id;
-                   
-
-                        //// Debug display for process assignment
-                        //std::cout << "Assigned process " << core->process_to_execute->process_name
-                        //    << " to Core " << core->id << std::endl;
 
                         core->cv.notify_one();
                         break;
                     }
                 }
             }
+        }
+    }
 
-            // std::this_thread::sleep_for(std::chrono::milliseconds(2000)); // I set it slow muna to see if it actually does one by one
+    void run_rr() {
+        int currentQuantum = quantumCycle;
+        while (true) {
+            // TO-DO, round robin algo
+            if (!readyQueue.empty()) {
+                for (auto& core : coresAvailable) {
+                    // Check if the core is free
+                    if (core->process_to_execute == nullptr) {
+                        std::unique_lock<std::mutex> lock(core->mtx);
+                        core->process_to_execute = readyQueue.front();
+                        readyQueue.erase(readyQueue.begin());
+
+                        // Update the process's core ID
+                        core->process_to_execute->core_id_assigned = core->id;
+
+                        core->cv.notify_one();
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -220,16 +288,23 @@ class Console {
 private:
     Schedule scheduler;
 
+    int freqProcess = -1;
+    int minCommand = -1;
+    int maxCommand = -1;
+    int delayExec = -1;
+    int currentProcess = 0;
+
+    bool hasInitialized = false;
+    bool toStartCreatingProcess = false;
     vector<std::shared_ptr<Screen>> screens;
     bool isMainMenu;
+
+    std::thread runningCreateProcesses;
 
 public:
     Console() : isMainMenu(true) {}
 
     void start() {
-        // ---------------- temp for FCFS scheduler
-        initialize();
-        // ----------------
 
         clearScreen(true);
         string command, option, process_name;
@@ -238,36 +313,206 @@ public:
             std::cout << "Enter a command: ";
             std::getline(std::cin, command);
 
-            if (command == "exit") {
-                std::cout << "Exiting program... Goodbye!" << std::endl;
-                break;
+            if (command == "initialize") {
+                if (hasInitialized)
+                    std::cout << "CPU is already initialized." << std::endl;
+                else
+                    initialize();
             }
-            else if (command.find("screen") == 0) {
-                std::istringstream iss(command.substr(6));
-                iss >> option >> process_name;
+            else if (hasInitialized)
+            {
+                if (command == "exit") {
+                    std::cout << "Exiting program... Goodbye!" << std::endl;
+                    break;
+                }
+                
+                else if (command.find("screen") == 0) {
 
-                handleScreenCommand(option, process_name);
+                    std::istringstream iss(command.substr(6));
+                    iss >> option >> process_name;
+
+                    handleScreenCommand(option, process_name);
+                }
+                else if (command == "clear") {
+                    clearScreen(true);
+                }
+                else if (command == "scheduler-test") {
+                    toStartCreatingProcess = true;
+                    runningCreateProcesses = std::thread(&Console::scheduler_test, this);
+                    runningCreateProcesses.detach();
+                }
+                else if (command == "scheduler-stop") {
+                    if (!toStartCreatingProcess)
+                        std::cout << "No ongoing scheduler-test at the moment.";
+                    else {
+                        toStartCreatingProcess = false;
+                        std::cout << "Stopped scheduler-test.";
+                    }
+                }
+                else {
+                    std::cout << "Unknown command. Please try again." << std::endl;
+                }
             }
-            else if (command == "clear") {
-                clearScreen(true);
-            }
-            else {
-                std::cout << "Unknown command. Please try again." << std::endl;
+            else
+            {
+                std::cout << "Commands cannot be accepted. CPU needs to be initialized." << std::endl;
             }
         }
     }
 
+    void scheduler_test()
+    {
+        std::random_device rd;  
+        std::mt19937 gen(rd()); 
+        std::uniform_int_distribution<> dist(minCommand, maxCommand); // randomize the amount of commands
+
+        int localCycle = cpuCycles;
+
+        while (toStartCreatingProcess) // so the thread can terminate by itself
+        {
+            if ((cpuCycles - localCycle) % freqProcess == 0) // if statement will dictate if it will create a process
+            {
+                std::shared_ptr<Screen> screen = std::make_shared<Screen>(Screen("process" + std::to_string(currentProcess), currentProcess, 0, dist(gen), getCurrentTimestamp()));
+                screens.push_back(screen);
+                scheduler.readyQueue.push_back(screens.back());
+
+                currentProcess++;
+            }
+            
+        }
+    }
+
+
     void initialize() {
-        for (int i = 0; i < 4; i++) {
-            auto core = make_shared<Core>(i);
+            ifstream readConfigFile("config.txt");
+            
+            if (!readConfigFile.is_open()) {
+                std::cout << "Failed to read the config.txt file." << std::endl;
+            }
+            else {
+                string cpuOption;
+                string configInput;
+                std::istringstream iss;
+    
+            try {
+                // num-cpu
+                getline(readConfigFile, cpuOption);
+                iss.str(cpuOption);
+                iss >> cpuOption >> configInput;
+                iss.clear(); // clear stream
+                    
+                if (cpuOption != "num-cpu")
+                    throw;
+
+                int nCpuToInitialize = stoi(configInput);
+                // to initialize cores after delay-per-exec is received
+                
+
+                // ------------------------ 
+
+                // scheduler
+                getline(readConfigFile, cpuOption);
+                iss.str(cpuOption);
+                iss >> cpuOption >> configInput;
+                iss.clear();// clear stream
+
+                if (cpuOption != "scheduler")
+                    throw std::exception("No option for scheduler");
+                
+                if (scheduler.initialize_scheduler(configInput)) // invalid config return 1
+                    throw std::exception("Invalid scheduler option");
+
+
+                // ------------------------ 
+
+                // quantum-cycles
+                getline(readConfigFile, cpuOption);
+                iss.str(cpuOption);
+                iss >> cpuOption >> configInput;
+                iss.clear();// clear stream
+
+                if (cpuOption != "quantum-cycles")
+                    throw std::exception("No option for quantum-cycles");
+
+                scheduler.quantumCycle = stoi(configInput);
+
+                // ------------------------ 
+
+                // batch-process-freq
+                getline(readConfigFile, cpuOption);
+                iss.str(cpuOption);
+                iss >> cpuOption >> configInput;
+                iss.clear();// clear stream
+
+                if (cpuOption != "batch-process-freq")
+                    throw std::exception("No option for batch-process-freq");
+
+                freqProcess = stoi(configInput);
+
+                // ------------------------
+                // min-ins
+                getline(readConfigFile, cpuOption);
+                iss.str(cpuOption);
+                iss >> cpuOption >> configInput;
+                iss.clear();// clear stream
+
+                if (cpuOption != "min-ins")
+                    throw std::exception("No option for min-ins");
+
+                minCommand = stoi(configInput);
+
+                // ------------------------
+
+                // max-ins
+                getline(readConfigFile, cpuOption);
+                iss.str(cpuOption);
+                iss >> cpuOption >> configInput;
+                iss.clear();// clear stream
+
+                if (cpuOption != "max-ins")
+                    throw std::exception("No option for max-ins");
+
+                maxCommand = stoi(configInput);
+
+                // ------------------------ 
+
+                // delays-per-exec
+                getline(readConfigFile, cpuOption);
+                iss.str(cpuOption);               
+                iss >> cpuOption >> configInput;
+                iss.clear();// clear stream
+
+                if (cpuOption != "delays-per-exec")
+                    throw std::exception("No option for delays-per-exec");
+
+                delayExec = stoi(configInput) + 1; // adding + 1 for modulo operations
+
+                initializeCores(nCpuToInitialize, delayExec);
+
+                // ------------------------
+
+
+                hasInitialized = true;
+
+                std::cout << "Successfully read config.txt." << std::endl;
+
+            }
+            catch (std::exception& e) {
+                std::cout << "Error in reading config.txt: " << e.what() << std::endl;
+            } 
+           }
+
+           
+
+    }
+
+
+    void initializeCores(int numCores, int delay)
+    {
+        for (int i = 0; i < numCores; i++) {
+            auto core = make_shared<Core>(i, delay);
             scheduler.coresAvailable.push_back(core);
             std::thread(&Core::running_core, core).detach();
-        }
-
-        for (int i = 0; i < 10; i++) {
-            std::shared_ptr<Screen> screen = std::make_shared<Screen>(Screen("process" + std::to_string(i), i, 0, 100, getCurrentTimestamp()));
-            screens.push_back(screen);
-            scheduler.readyQueue.push_back(screens.back());
         }
     }
 
@@ -309,13 +554,19 @@ public:
         bool screenFound = false;
         for (int i = 0; i < screens.size(); i++) {
             if (screens[i]->process_name == process_name) {
-                initScreen(screens[i]);
-                screenFound = true;
+
+                if (screens[i]->status == screens[i]->FINISHED)
+                    break;
+                else
+                { 
+                    initScreen(screens[i]);
+                    screenFound = true;
+                    break;
+                }
             }
         }
         if (!screenFound) {
-            std::cout << "Screen attach failed. Process " << process_name
-                << " not found. You may need to initialize via screen -s <process name> command." << std::endl;
+            std::cout << "Process " << process_name << " not found." << std::endl;
         }
     }
 
