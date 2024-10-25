@@ -81,7 +81,8 @@ public:
         pid(pid),
         curr_line_instr(0),
         total_line_instr(total_line_instr),
-        created_at(created_at) {}
+        created_at(created_at) {
+    }
 
     Screen(string process_name,
         ProcessStatus status,
@@ -109,14 +110,18 @@ public:
             std::cout << std::endl << "Finished!" << std::endl;
     }
 
-    void executeCommand() {
+    int executeCommand() {
 
         status = RUNNING;
 
         curr_line_instr++;
 
         if (curr_line_instr == total_line_instr)
-            status = FINISHED;
+            {
+                status = FINISHED;
+                return 0;
+            }
+        return 1;
        
           
     }
@@ -132,12 +137,16 @@ public:
     int id;
     int delayConfig;
     int delay;
+    int cycle;
+    int quantumCycle = -1;
     shared_ptr<Screen> process_to_execute = nullptr;
 
     std::mutex mtx;
-    
 
-    Core(int id, int delay) : id(id), delay(delay) {}
+    Core(int id, int delayConfig, int quantumCycle) : id(id), delayConfig(delayConfig), quantumCycle(quantumCycle) { 
+        delay = delayConfig; 
+        cycle = quantumCycle; 
+    }
 
     void run_core() {
         std::unique_lock<std::mutex> lock(mtx);
@@ -147,7 +156,15 @@ public:
             {
                 delay = delayConfig;
 
-                process_to_execute->executeCommand();
+                if (process_to_execute->executeCommand() == 0) // 0 means all instructions have been executed
+                {
+                    process_to_execute = nullptr;
+                    cycle = quantumCycle;
+                }
+                else
+                    cycle--;
+                
+                
 
             }
             else  // busy
@@ -162,7 +179,6 @@ class Schedule {
 public:
     vector<shared_ptr<Core>> coresAvailable;
     vector<shared_ptr<Screen>> readyQueue;
-    int quantumCycle = -1;
     
     enum SchedulingAlgorithm {
         FCFS,
@@ -172,7 +188,7 @@ public:
     SchedulingAlgorithm schedulingAlgo;
 
 
-    Schedule() {}
+    Schedule() { }
 
     int initialize_scheduler(string algoSelected) // to check if input was valid
     {
@@ -197,6 +213,7 @@ public:
 
     void run_scheduler()
     {
+
         if (schedulingAlgo == this->FCFS)
             run_fcfs();
         
@@ -208,8 +225,9 @@ public:
 
     // this is to be ran sequentially from main loop
     void run_fcfs() {
-        if (!readyQueue.empty()) {
-            for (auto& core : coresAvailable) {
+
+        for (auto& core : coresAvailable) {
+            if (!readyQueue.empty()) {
                 // Check if the core is free
                 if (core->process_to_execute == nullptr) {
                     core->process_to_execute = readyQueue.front();
@@ -217,28 +235,64 @@ public:
 
                     // Update the process's core ID
                     core->process_to_execute->core_id_assigned = core->id;
+                   
                 }
             }
-
+            else
+                break;
 
         }
-
-        
         
         
     }
 
     void run_rr() {
-        int currentQuantum = quantumCycle;
-        
-            // TO-DO, round robin algo
+       
+
+        // this uses a different algorithm from fcfs
+        for (int i = 0; i < coresAvailable.size(); i++) {
+
+            // RR algorithm
+      
+                // Check if the core is free
+                if (coresAvailable[i]->process_to_execute == nullptr) {
+                    if (!readyQueue.empty())
+                    {
+                        coresAvailable[i]->process_to_execute = readyQueue.front();
+                        readyQueue.erase(readyQueue.begin());
+
+                        // Update the process's core ID
+                        coresAvailable[i]->process_to_execute->core_id_assigned = coresAvailable[i]->id;
+                    }
+                  
+
+                }
+                else {
+
+                    // check if we need to preempt
+                    if (coresAvailable[i]->cycle == 0)
+                    {
+                        coresAvailable[i]->cycle = coresAvailable[i]->quantumCycle; // reset quantum cycle
+                        readyQueue.push_back(coresAvailable[i]->process_to_execute); // put process back into ready queue
+                        coresAvailable[i]->process_to_execute = nullptr;  // remove
+
+                        // if another process can be executed in the ready queue
+                        if (!readyQueue.empty())
+                        {
+                            coresAvailable[i]->process_to_execute = readyQueue.front();
+                            readyQueue.erase(readyQueue.begin());
+
+                            // Update the process's core ID
+                            coresAvailable[i]->process_to_execute->core_id_assigned = coresAvailable[i]->id;
+                        }
+                    }
+                }
+           
+
+        }
           
         
     }
-
-
-
-
 
     // debug display for ready queue and core status
     void debugSchedulerState() {
@@ -326,6 +380,63 @@ public:
                 else if (command == "clear") {
                     clearScreen(true);
                 }
+                else if (command == "report-util")
+                {
+
+                    ofstream fileOPESY;
+                    fileOPESY.open("csopesy-log.txt");
+                    
+
+                    // copied and pasted from screen -ls command
+                    int coresUsed = checkCoresUsed();
+                    fileOPESY << "CPU Utilization: " << std::round(((coresUsed * 1.0) / scheduler.coresAvailable.size()) * 100) << "%" << std::endl;
+                    fileOPESY << "Cores used: " << coresUsed << std::endl;
+                    fileOPESY << "Cores available: " << scheduler.coresAvailable.size() - coresUsed << std::endl << std::endl;
+
+                    fileOPESY << "--------------------------------------" << std::endl;
+
+                    if (screens.empty()) {
+                        fileOPESY << "No screens attached." << std::endl;
+                    }
+                    else {
+
+                        fileOPESY << "--------------------------------------" << std::endl;
+                        fileOPESY << "Running processes: " << std::endl;
+
+                        for (const auto& screen : screens) {
+                            if (screen->status == Screen::RUNNING)
+                            {
+                                fileOPESY << screen->process_name << "    ";
+                                fileOPESY << "(" + screen->created_at + ")    ";
+                                fileOPESY << "Core: " + std::to_string(screen->core_id_assigned) << "    ";
+                                fileOPESY << screen->curr_line_instr << " / " << screen->total_line_instr << "\n";
+
+                            }
+
+                        }
+
+                        fileOPESY << std::endl;
+                        fileOPESY << "Finished processes: " << std::endl;
+
+                        for (const auto& screen : screens) {
+                            if (screen->status == Screen::FINISHED)
+                            {
+                                fileOPESY << screen->process_name << "    ";
+                                fileOPESY << "(" + screen->created_at + ")  ";
+                                fileOPESY << "Finished     ";
+                                fileOPESY << screen->curr_line_instr << " / " << screen->total_line_instr << "\n";
+                            }
+
+
+                        }
+                        fileOPESY << "--------------------------------------" << std::endl;
+
+                    }
+                    fileOPESY.close();
+                        
+                    //
+                    std::cout << "Successfully printed report-util." << std::endl;
+                }
                 else if (command == "scheduler-test") {
                     toStartCreatingProcess = true;
                     std::cout << "scheduler-test activated." << std::endl;
@@ -351,7 +462,7 @@ public:
 
     void scheduler_test()
     {
-           
+
         // we made it -1 in instantiating batch-per-freq, so it's centered at 0
         if (freq == 0) // if statement will dictate if it will create a process
         {
@@ -404,6 +515,7 @@ public:
 
 
     void initialize() {
+         int quantumCycles;
             ifstream readConfigFile("config.txt");
             
             if (!readConfigFile.is_open()) {
@@ -454,7 +566,7 @@ public:
                 if (cpuOption != "quantum-cycles")
                     throw std::exception("No option for quantum-cycles");
 
-                scheduler.quantumCycle = stoi(configInput);
+                quantumCycles = stoi(configInput);
 
                 // ------------------------ 
 
@@ -507,7 +619,7 @@ public:
 
                 delayExec = stoi(configInput) + 1; // + 1 for easier time(?)
 
-                initializeCores(nCpuToInitialize, delayExec);
+                initializeCores(nCpuToInitialize, delayExec, quantumCycles);
 
                 // ------------------------
 
@@ -530,10 +642,10 @@ public:
     }
 
 
-    void initializeCores(int numCores, int delay)
+    void initializeCores(int numCores, int delay, int quantumCycles)
     {
         for (int i = 0; i < numCores; i++) {
-            auto core = make_shared<Core>(i, delay);
+            auto core = make_shared<Core>(i, delay, quantumCycles);
             scheduler.coresAvailable.push_back(core);
             
         }
@@ -580,7 +692,7 @@ public:
         for (int i = 0; i < screens.size(); i++) {
             if (screens[i]->process_name == process_name) {
 
-                if (screens[i]->status == screens[i]->FINISHED)
+                if (screens[i]->status == Screen::FINISHED)
                     break;
                 else
                 { 
@@ -596,11 +708,19 @@ public:
     }
 
     void listScreens(bool debug = false) {
-       
+
+        int coresUsed = checkCoresUsed();
+        std::cout << "CPU Utilization: " << std::round(((coresUsed * 1.0)/scheduler.coresAvailable.size()) * 100) << "%" << std::endl;
+        std::cout << "Cores used: " << coresUsed << std::endl;
+        std::cout << "Cores available: " << scheduler.coresAvailable.size() - coresUsed << std::endl << std::endl;
+
+        std::cout << "--------------------------------------" << std::endl;
+        
         if (screens.empty()) {
             std::cout << "No screens attached." << std::endl;
         }
         else {
+            
             std::cout << "--------------------------------------" << std::endl;
             std::cout << "Running processes: " << std::endl;
 
@@ -637,6 +757,19 @@ public:
                 scheduler.debugSchedulerState();
             }
         }
+    }
+
+    int checkCoresUsed()
+    {
+        int coresUsed = 0;
+        for (int i = 0; i < scheduler.coresAvailable.size(); i++)
+        {
+            if (scheduler.coresAvailable[i]->process_to_execute != nullptr)
+                coresUsed++;
+        }
+
+        return coresUsed;
+        
     }
 
 
