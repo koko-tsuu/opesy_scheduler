@@ -112,7 +112,7 @@ public:
 
     int executeCommand() {
 
-        status = RUNNING;
+        
 
         curr_line_instr++;
 
@@ -235,6 +235,7 @@ public:
 
                     // Update the process's core ID
                     core->process_to_execute->core_id_assigned = core->id;
+                    core->process_to_execute->status = Screen::RUNNING;
                    
                 }
             }
@@ -263,6 +264,7 @@ public:
 
                         // Update the process's core ID
                         coresAvailable[i]->process_to_execute->core_id_assigned = coresAvailable[i]->id;
+                        coresAvailable[i]->process_to_execute->status = Screen::RUNNING;
                     }
                   
 
@@ -274,6 +276,7 @@ public:
                     {
                         coresAvailable[i]->cycle = coresAvailable[i]->quantumCycle; // reset quantum cycle
                         readyQueue.push_back(coresAvailable[i]->process_to_execute); // put process back into ready queue
+                        coresAvailable[i]->process_to_execute->status = Screen::READY;
                         coresAvailable[i]->process_to_execute = nullptr;  // remove
 
                         // if another process can be executed in the ready queue
@@ -284,6 +287,7 @@ public:
 
                             // Update the process's core ID
                             coresAvailable[i]->process_to_execute->core_id_assigned = coresAvailable[i]->id;
+                            coresAvailable[i]->process_to_execute->status = Screen::RUNNING;
                         }
                     }
                 }
@@ -342,7 +346,6 @@ private:
     int cpuCycles = 0;
 
     std::vector<std::thread> listOfCoreThreads;
-
 
 
 public:
@@ -438,8 +441,15 @@ public:
                     std::cout << "Successfully printed report-util." << std::endl;
                 }
                 else if (command == "scheduler-test") {
-                    toStartCreatingProcess = true;
-                    std::cout << "scheduler-test activated." << std::endl;
+                    if (toStartCreatingProcess)
+                    {
+                        std::cout << "scheduler-test is already activated." << std::endl;
+                    }
+                    else {
+                        toStartCreatingProcess = true;
+                        std::cout << "scheduler-test activated." << std::endl;
+                    }
+                    
                 }
                 else if (command == "scheduler-stop") {
                     if (!toStartCreatingProcess)
@@ -799,7 +809,6 @@ public:
                 clearScreen(false);
                 screen->printScreen();
             }
-            // 
             else if (command == "process-smi") {
                 screen->printScreen();
             }
