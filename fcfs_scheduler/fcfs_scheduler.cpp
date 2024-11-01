@@ -16,18 +16,6 @@
 
 #include <windows.h> // Sleep to not automatically complete the tasks
 
-// NOTE: all to-dos are related to MO1
-
-/*
-*  Listing down to-dos because i'm getting confused lol
-*   initialize command -> integrate config to code
-*           scheduler + quantum-cycles-> integrate roundrobin algorithm 
-*   screen -s -> process-smi + user should not be able to access the process after its finished execution
-*   report-util -> save this into a text file "csopesy-log.txt"
-*   screen -ls -> we have this already, maybe clean up lang with the printing (no running processes chuchu)
-* 
-*  TO CHANGE: cpu cycle related stuff, i don't know if it's good enough?
-*/
 
 using namespace std;
 class Core;
@@ -139,7 +127,7 @@ public:
     int delay;
     int cycle;
     int quantumCycle = -1;
-    shared_ptr<Screen> process_to_execute = nullptr;
+    shared_ptr<Screen> process_to_execute;
 
     std::mutex mtx;
 
@@ -277,7 +265,7 @@ public:
                         coresAvailable[i]->cycle = coresAvailable[i]->quantumCycle; // reset quantum cycle
                         readyQueue.push_back(coresAvailable[i]->process_to_execute); // put process back into ready queue
                         coresAvailable[i]->process_to_execute->status = Screen::READY;
-                        coresAvailable[i]->process_to_execute = nullptr;  // remove
+                        coresAvailable[i]->process_to_execute = nullptr;
 
                         // if another process can be executed in the ready queue
                         if (!readyQueue.empty())
@@ -685,9 +673,14 @@ public:
 
     void createScreen(const string& process_name) {
         if (!checkExistingScreen(process_name)) {
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_int_distribution<> dist(minCommand, maxCommand); // randomize the amount of commands
+
             int pid = screens.size();
-            std::shared_ptr<Screen> screen = make_shared<Screen>(Screen(process_name, pid, 0, 50, getCurrentTimestamp()));
+            std::shared_ptr<Screen> screen = make_shared<Screen>(Screen(process_name, pid, 0, dist(gen), getCurrentTimestamp()));
             screens.push_back(screen);
+            scheduler.readyQueue.push_back(screen);
             initScreen(screen);
         }
         else {
@@ -695,7 +688,6 @@ public:
         }
     }
 
-    // TO-DO: MO1: At any given time, any process can finish its execution. If this happens, the user can no longer access the screen after exiting.
     // to check if process has finished, then do not enter initScreen()
     void attachScreen(const string& process_name) {
         bool screenFound = false;
@@ -792,7 +784,7 @@ public:
         return false;
     }
 
-    void initScreen(std::shared_ptr<Screen>& screen) {
+    void initScreen(std::shared_ptr<Screen> screen) {
         clearScreen(false);
         screen->printScreen();
 
