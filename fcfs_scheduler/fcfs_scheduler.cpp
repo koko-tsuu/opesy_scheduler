@@ -391,7 +391,6 @@ public:
                     }
                     else {
 
-                        fileOPESY << "--------------------------------------" << std::endl;
                         fileOPESY << "Running processes: " << std::endl;
 
                         for (const auto& screen : screens) {
@@ -723,7 +722,6 @@ public:
         }
         else {
             
-            std::cout << "--------------------------------------" << std::endl;
             std::cout << "Running processes: " << std::endl;
 
             for (const auto& screen : screens) {
