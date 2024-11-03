@@ -558,10 +558,10 @@ public:
                 iss.clear();// clear stream
 
                 if (cpuOption != "scheduler")
-                    throw std::exception("No option for scheduler");
+                    throw std::invalid_argument("No option for scheduler");
                 
                 if (scheduler.initialize_scheduler(configInput)) // invalid config return 1
-                    throw std::exception("Invalid scheduler option");
+                    throw std::invalid_argument("Invalid scheduler option");
 
 
                 // ------------------------ 
@@ -573,7 +573,7 @@ public:
                 iss.clear();// clear stream
 
                 if (cpuOption != "quantum-cycles")
-                    throw std::exception("No option for quantum-cycles");
+                    throw std::invalid_argument("No option for quantum-cycles");
 
                 quantumCycles = stoi(configInput);
 
@@ -586,7 +586,7 @@ public:
                 iss.clear();// clear stream
 
                 if (cpuOption != "batch-process-freq")
-                    throw std::exception("No option for batch-process-freq");
+                    throw std::invalid_argument("No option for batch-process-freq");
 
                 freqProcess = stoi(configInput);
 
@@ -598,7 +598,7 @@ public:
                 iss.clear();// clear stream
 
                 if (cpuOption != "min-ins")
-                    throw std::exception("No option for min-ins");
+                    throw std::invalid_argument("No option for min-ins");
 
                 minCommand = stoi(configInput);
 
@@ -611,7 +611,7 @@ public:
                 iss.clear();// clear stream
 
                 if (cpuOption != "max-ins")
-                    throw std::exception("No option for max-ins");
+                    throw std::invalid_argument("No option for max-ins");
 
                 maxCommand = stoi(configInput);
 
@@ -624,7 +624,7 @@ public:
                 iss.clear();// clear stream
 
                 if (cpuOption != "delays-per-exec")
-                    throw std::exception("No option for delays-per-exec");
+                    throw std::invalid_argument("No option for delays-per-exec");
 
                 delayExec = stoi(configInput) + 1; // + 1 for easier time(?)
 
