@@ -29,6 +29,8 @@ void printHeader();
 
 
 
+
+
 class Screen {
 public:
     string process_name;
@@ -334,6 +336,8 @@ private:
     int cpuCycles = 0;
 
     std::vector<std::thread> listOfCoreThreads;
+    std::thread cpuCycleThreadHolder;
+    bool hasQuit = false;
 
 
 public:
@@ -357,6 +361,9 @@ public:
             else if (hasInitialized)
             {
                 if (command == "exit") {
+                    hasQuit = true; 
+                    joinAllThreads();
+
                     std::cout << "Exiting program... Goodbye!" << std::endl;
                     break;
                 }
@@ -457,6 +464,11 @@ public:
         }
     }
 
+    void joinAllThreads()
+    {
+        cpuCycleThreadHolder.join();
+    }
+
     void scheduler_test()
     {
 
@@ -484,7 +496,7 @@ public:
     void simulateCpuCycle()
     {
         
-        while (true) {  
+        while (!hasQuit) {  
 
             // 1. receive new processes
             if (toStartCreatingProcess)
@@ -626,7 +638,7 @@ public:
                 std::cout << "Successfully read config.txt. Starting CPU cycles." << std::endl;
 
                 // start cpu cycles
-                std::thread(&Console::simulateCpuCycle, this).detach();
+                cpuCycleThreadHolder = std::thread(&Console::simulateCpuCycle, this);
 
             }
             catch (std::exception& e) {
@@ -845,8 +857,8 @@ string getCurrentTimestamp() {
 }
 
 int main() {
+    Console console = Console();
+    console.start();
 
-   Console console = Console();
-   console.start();
     return 0;
 }
