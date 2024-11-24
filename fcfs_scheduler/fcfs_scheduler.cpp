@@ -1,6 +1,8 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
+#include <cstdio>
+#include <iostream>
 #include <sstream>
 #include <ctime>
 #include <iomanip>
@@ -31,7 +33,6 @@ void printHeader();
 
 
 
-
 class Screen {
 public:
     string process_name;
@@ -50,51 +51,33 @@ public:
     int total_line_instr;
     int core_id_assigned = -1;
 
-    //--------------- unused part
-    enum Command {
-        PRINT
-    };
-
-    vector<Command> commands;
-
-    //---------------
-
-
     string created_at;
-    
 
-    // --
+    int frames_needed;
 
-    int base_frame = -1 ;
-    int last_frame = -1 ;
-    int process_size;
+    int base_frame = -1; // for flat memory allocator
+    int last_frame = -1; // for flat memory allocator
+
+    int memory_to_occupy = -1;
+
+    time_t placed_in_memory;
+    vector<int> pages; 
+
 
     Screen(string process_name,
         int pid,
         int curr_line_instr,
         int total_line_instr,
-        string created_at, int process_size)
+        string created_at, int memory_to_occupy, int frames_needed)
         :
         process_name(process_name),
         pid(pid),
         curr_line_instr(0),
         total_line_instr(total_line_instr),
-        created_at(created_at), process_size(process_size) {
+        created_at(created_at), 
+        memory_to_occupy(memory_to_occupy),
+        frames_needed(frames_needed) {
     }
-
-    Screen(string process_name,
-        ProcessStatus status,
-        int pid,
-        int total_line_instr,
-        vector<Command> commands,
-        string created_at, int process_size)
-        :
-        process_name(process_name),
-        status(status),
-        pid(pid),
-        curr_line_instr(0),
-        total_line_instr(total_line_instr),
-        created_at(created_at), process_size(process_size){}
 
     void printScreen() {
         std::cout << "Process Name: " << process_name << std::endl;
@@ -110,8 +93,6 @@ public:
 
     int executeCommand() {
 
-        
-
         curr_line_instr++;
 
         if (curr_line_instr == total_line_instr)
@@ -125,38 +106,44 @@ public:
     }
 
 
-
-
 };
 
 
 class Memory {
 public:
-    // check which ones are available
-    std::unordered_map<int, boolean> availableFrames;
-    std::vector<std::shared_ptr<Screen>> processInMemory; // just for easier printing
-    int maxMemory = -1;
+   
+    std::unordered_map<int, boolean> flatMemoryAllocator; // used in memory allocator
+    std::vector<int> availableFrames;                   // used in paging
+    std::vector<std::shared_ptr<Screen>> processInMemory;
     int numberOfTotalFrames = -1;
-    int numberOfFramesNeededPerProcess = -1;
+    int maxMemory;
+    int type;
+
+    int numPagedIn = 0;
+    int numPagedOut = 0;
 
     Memory() {};
 
-    void initialize(int max, int memoryPerFrame, int memoryPerProcess)
+    void initialize(int max, int memoryPerFrame, int type)
     {
         maxMemory = max;
         numberOfTotalFrames = maxMemory / memoryPerFrame;
-        numberOfFramesNeededPerProcess = memoryPerProcess / memoryPerFrame;
+        this->type = type;
 
-        for (int i = 0; i < numberOfTotalFrames; i++)
-            availableFrames.insert({ i, false });
+        if (type == 0)
+            for (int i = 0; i < numberOfTotalFrames; i++)
+                flatMemoryAllocator.insert({ i, false });
+        else
+            for (int i = 0; i < numberOfTotalFrames; i++)
+                availableFrames.push_back(i);
     }
+
 
     void deallocateFrames(std::shared_ptr<Screen> screen)
     {
-        for (int i = screen->base_frame; i <= screen->last_frame; i++)
-        {
-            availableFrames[i] = false;
-        }
+        for (int i = 0; i < screen->frames_needed; i++)
+            availableFrames.push_back(screen->pages[i]);
+        screen->pages.clear();
         deleteProcessInMemory(screen);
 
     }
@@ -175,44 +162,7 @@ public:
 
     }
 
-    boolean allocateFrames(std::shared_ptr<Screen> screen)
-    {
-        int firstFitIndex = returnFirstFitIndex();
-
-        if (firstFitIndex != -1)
-        {
-            screen->base_frame = firstFitIndex;
-            screen->last_frame = firstFitIndex + (numberOfFramesNeededPerProcess - 1);
-
-            for (int i = firstFitIndex; i <= firstFitIndex + (numberOfFramesNeededPerProcess - 1); i++)
-            {
-                availableFrames[i] = true;
-            }
-            insertProcessInMemory(screen);
-            return true;
-        }
-        else
-            return false;
-
-    }
-
-    void insertProcessInMemory(std::shared_ptr<Screen> screen)
-    {
-        int prevHighestAddressProcess = 0;
-        for (int i = 0; i < processInMemory.size(); i++)
-        {
-            if (screen->base_frame < processInMemory[i]->base_frame)
-            {
-                prevHighestAddressProcess = i;
-            }
-            else
-                break;
-
-        }
-        processInMemory.insert(processInMemory.begin() + prevHighestAddressProcess, screen);
-    }
-
-    int returnFirstFitIndex()
+    int returnFirstFitIndex(int framesNeeded)
     {
         int endRange = -1;
         int increment = 0;
@@ -229,13 +179,156 @@ public:
                 increment = 0;
             }
 
-            if (increment == numberOfFramesNeededPerProcess && endRange != -1)
-                return endRange - (numberOfFramesNeededPerProcess - 1); // -1 to include the startIndex
+            if (increment == framesNeeded && endRange != -1)
+                return endRange - (framesNeeded - 1); // -1 to include the startIndex
 
         }
 
         return -1;
     }
+
+    void allocate(std::shared_ptr<Screen> screen)
+    {
+        if (type == 0)
+            allocateFlatMemory(screen);
+        else
+            allocateFrames(screen);
+
+    }
+
+    void storeBackingStore() // already contains deallocate
+    {
+        int index = 0; // find oldest process
+        // find a process to kick out
+        for (int i = 0; i < processInMemory.size(); i++)
+        {
+            if (processInMemory[index]->placed_in_memory > processInMemory[i]->placed_in_memory) // index is more recent than i
+                index = i;
+            
+        }
+
+        // store
+        ofstream fileOPESY;
+        fileOPESY.open(processInMemory[index]->process_name + ".txt");
+        fileOPESY.close();
+
+        // bring back frames
+        deallocate(processInMemory[index]);
+
+        numPagedOut++;
+
+        
+    }
+
+    boolean takeBackingStore(std::shared_ptr<Screen> screen)
+    { 
+        try {
+            // take
+            string fileToRemove = screen->process_name + ".txt";
+            std::remove(fileToRemove.c_str());
+
+            numPagedIn++;
+            return true;
+        }
+        catch (exception e) {
+            // 
+            return false;
+        }
+    }
+
+    void deallocate(std::shared_ptr<Screen> screen)
+    {
+        if (type == 0)
+            deallocateFlatMemory(screen);
+        else
+            deallocateFrames(screen);
+
+
+    }
+
+
+    void allocateFlatMemory(std::shared_ptr<Screen> screen)
+    {
+        takeBackingStore(screen);
+
+        boolean isProcessAllocated = false;
+        while (!isProcessAllocated)
+        {
+
+            int firstFitIndex = returnFirstFitIndex(screen->frames_needed);
+
+            if (firstFitIndex != -1)
+            {
+                screen->base_frame = firstFitIndex;
+                screen->last_frame = firstFitIndex + (screen->frames_needed - 1);
+
+                for (int i = firstFitIndex; i <= firstFitIndex + (screen->frames_needed - 1); i++)
+                    flatMemoryAllocator[i] = true;
+
+                processInMemory.push_back(screen);
+                screen->placed_in_memory = std::time(nullptr);
+                isProcessAllocated = true;
+
+            }
+            else // find a process to kick out
+                storeBackingStore();
+                
+
+        }
+
+    }
+
+    void deallocateFlatMemory(std::shared_ptr<Screen> screen)
+    {
+        for (int i = screen->base_frame; i <= screen->last_frame; i++)
+            flatMemoryAllocator[i] = false;
+
+        screen->base_frame = -1;
+        screen->last_frame = -1;
+
+        deleteProcessInMemory(screen);
+    }
+
+
+    void allocateFrames(std::shared_ptr<Screen> screen)
+    {
+        takeBackingStore(screen); // simulate
+
+        boolean isProcessAllocated = false;
+        while (!isProcessAllocated)
+        {
+            
+            if (screen->frames_needed >= availableFrames.size())
+            {
+                // take available frames
+                for (int i = 0; i < screen->frames_needed; i++)
+                    screen->pages.push_back(availableFrames[i]);
+
+                availableFrames.erase(availableFrames.begin() + 0, availableFrames.begin() + (screen->frames_needed - 1)); // recheck on this
+                processInMemory.push_back(screen);
+                screen->placed_in_memory = std::time(nullptr);
+                isProcessAllocated = true;
+
+
+            }
+            else // kick a process out
+                storeBackingStore();
+         
+            
+        }
+
+    }
+
+    int getMemoryUsage()
+    {
+        int total = 0;
+        for (int i = 0; i < processInMemory.size(); i++)
+        {
+            total += processInMemory[i]->memory_to_occupy;
+        }
+    }
+
+  
 };
 
 
@@ -268,7 +361,7 @@ public:
 
                 if (process_to_execute->executeCommand() == 0) // 0 means all instructions have been executed
                 {
-                    memory->deallocateFrames(process_to_execute);
+                    memory->deallocate(process_to_execute);
                     process_to_execute = nullptr;
                     cycle = quantumCycle;     
                 }
@@ -350,18 +443,15 @@ public:
             if (!readyQueue.empty()) {
                 // Check if the core is free
                 if (core->process_to_execute == nullptr) {
-                    if (memory->allocateFrames(readyQueue.front()))
-                    { 
-                        core->process_to_execute = readyQueue.front();
-                        readyQueue.erase(readyQueue.begin());
+                    memory->allocate(readyQueue.front());
+                    
+                    core->process_to_execute = readyQueue.front();
+                    readyQueue.erase(readyQueue.begin());
 
-                        // Update the process's core ID
-                        core->process_to_execute->core_id_assigned = core->id;
-                        core->process_to_execute->status = Screen::RUNNING;
-                    }
-                    else {
-                        std::swap(readyQueue.front(), readyQueue.back());
-                    }
+                    // Update the process's core ID
+                    core->process_to_execute->core_id_assigned = core->id;
+                    core->process_to_execute->status = Screen::RUNNING;
+                 
                    
                 }
             }
@@ -385,18 +475,16 @@ public:
                 if (coresAvailable[i]->process_to_execute == nullptr) {
                     if (!readyQueue.empty())
                     {
-                        if (memory->allocateFrames(readyQueue.front()))
-                        {
-                            coresAvailable[i]->process_to_execute = readyQueue.front();
-                            readyQueue.erase(readyQueue.begin());
+                        memory->allocate(readyQueue.front());
+                        
+                        coresAvailable[i]->process_to_execute = readyQueue.front();
+                        readyQueue.erase(readyQueue.begin());
 
-                            // Update the process's core ID
-                            coresAvailable[i]->process_to_execute->core_id_assigned = coresAvailable[i]->id;
-                            coresAvailable[i]->process_to_execute->status = Screen::RUNNING;
-                        }
-                        else {
-                            std::swap(readyQueue.front(), readyQueue.back());
-                        }
+                        // Update the process's core ID
+                        coresAvailable[i]->process_to_execute->core_id_assigned = coresAvailable[i]->id;
+                        coresAvailable[i]->process_to_execute->status = Screen::RUNNING;
+                        
+                        
                     }
                   
 
@@ -409,25 +497,24 @@ public:
                         coresAvailable[i]->cycle = coresAvailable[i]->quantumCycle; // reset quantum cycle
                         readyQueue.push_back(coresAvailable[i]->process_to_execute); // put process back into ready queue
                         coresAvailable[i]->process_to_execute->status = Screen::READY;
-                        memory->deallocateFrames(coresAvailable[i]->process_to_execute); // delete first
+
+                        // I assume process will stay in memory until another process needs to take its place
+                        // memory->storeBackingStore(coresAvailable[i]->process_to_execute);
+
                         coresAvailable[i]->process_to_execute = nullptr;
 
 
                         // if another process can be executed in the ready queue
                         if (!readyQueue.empty())
                         {
-                            if (memory->allocateFrames(readyQueue.front()))
-                            {
-                                coresAvailable[i]->process_to_execute = readyQueue.front();
-                                readyQueue.erase(readyQueue.begin());
+                            memory->allocate(readyQueue.front());
+                            coresAvailable[i]->process_to_execute = readyQueue.front();
+                            readyQueue.erase(readyQueue.begin());
 
-                                // Update the process's core ID
-                                coresAvailable[i]->process_to_execute->core_id_assigned = coresAvailable[i]->id;
-                                coresAvailable[i]->process_to_execute->status = Screen::RUNNING;
-                            }
-                            else {
-                                std::swap(readyQueue.front(), readyQueue.back());
-                            }
+                            // Update the process's core ID
+                            coresAvailable[i]->process_to_execute->core_id_assigned = coresAvailable[i]->id;
+                            coresAvailable[i]->process_to_execute->status = Screen::RUNNING;
+                           
                         }
                     }
                 }
@@ -479,14 +566,18 @@ private:
     int maxCommand = -1;
     int delayExec = -1;
     int currentProcess = 0;
-    int memoryPerProcess;
-    int numberOfMemoryPerFrame;
+    int memoryPerFrame;
+    int minMemPerProc;
+    int maxMemPerProc;
 
     bool hasInitialized = false;
     bool toStartCreatingProcess = false;
     vector<std::shared_ptr<Screen>> screens;
     bool isMainMenu;
+
     int cpuCycles = 0;
+    int idleCycles = 0;
+    int activeCycles = 0;
 
     std::vector<std::thread> listOfCoreThreads;
     std::thread cpuCycleThreadHolder;
@@ -609,6 +700,41 @@ public:
                         std::cout << "Stopped scheduler-test." << std::endl;
                     }
                 }
+                else if (command == "process-smi") {
+                    int coresUsed = checkCoresUsed();
+                    int memoryUsage = memory->getMemoryUsage();
+                    std::cout << "-------------------------------------------------------------" << std::endl;
+                    std::cout << "|                       PROCESS-SMI                         |" << std::endl;
+                    std::cout << "-------------------------------------------------------------" << std::endl;
+                    std::cout << "CPU-Util: " << std::round(((coresUsed * 1.0) / scheduler.coresAvailable.size()) * 100) << "%" << std::endl;
+                    std::cout << "Memory Usage: " << memoryUsage << "KB / " << memory->maxMemory << "KB" << std::endl;
+                    std::cout << "Memory Util: " << std::round(((memoryUsage * 1.0) / memory->maxMemory) * 100) << "%" << std::endl << std::endl;
+                    std::cout << "==============================================================" << std::endl;
+                    std::cout << "Running processes and memory usage:" << std::endl;
+                    std::cout << "-------------------------------------------------------------" << std::endl;
+                    
+                    for (int i = 0; i < memory->processInMemory.size(); i++)
+                        std::cout << memory->processInMemory[i]->process_name << " " << memory->processInMemory[i]->memory_to_occupy << "KB" << std::endl;
+                    
+                    std::cout << "-------------------------------------------------------------" << std::endl;
+
+
+                        
+                }
+                else if (command == "vmstat") {
+                    int memoryUsage = memory->getMemoryUsage();
+                    int freeMemory = memory->maxMemory - memoryUsage;
+
+                    std::cout << memory->maxMemory << " total memory" << std::endl;
+                    std::cout << memoryUsage << " used memory" << std::endl;
+                    std::cout << freeMemory << " free memory" << std::endl;
+                    std::cout << idleCycles << " idle CPU ticks" << std::endl;
+                    std::cout << activeCycles << " active CPU ticks" << std::endl;
+                    std::cout << cpuCycles << " total CPU ticks" << std::endl;
+                    std::cout << memory->numPagedIn << " num paged in" << std::endl;
+                    std::cout << memory->numPagedOut << " num paged out" << std::endl;
+
+                    }
                 else {
                     std::cout << "Unknown command. Please try again." << std::endl;
                 }
@@ -634,7 +760,9 @@ public:
             std::random_device rd;
             std::mt19937 gen(rd());
             std::uniform_int_distribution<> dist(minCommand, maxCommand); // randomize the amount of commands
-            std::shared_ptr<Screen> screen = std::make_shared<Screen>(Screen("process" + std::to_string(currentProcess), currentProcess, 0, dist(gen), getCurrentTimestamp(), memoryPerProcess));
+            std::uniform_int_distribution<> memory(minMemPerProc, maxMemPerProc);
+            int generatedMemory = memory(gen);
+            std::shared_ptr<Screen> screen = std::make_shared<Screen>(Screen("process" + std::to_string(currentProcess), currentProcess, 0, dist(gen), getCurrentTimestamp(), generatedMemory, ceil((generatedMemory * 1.0) / memoryPerFrame)));
             screens.push_back(screen);
             scheduler.readyQueue.push_back(screens.back());
 
@@ -662,6 +790,11 @@ public:
             // 2. run scheduler
             scheduler.run_scheduler();
 
+            // to see if this is an idle cycle, check if all cores have process
+            if (isIdleCycle)
+                idleCycles++;
+            else
+                activeCycles++;
 
             // 3. execute all cores
             for (int i = 0; i < listOfCoreThreads.size(); i++)
@@ -671,7 +804,7 @@ public:
             for (int i = 0; i < listOfCoreThreads.size(); i++)
                 listOfCoreThreads[i].join();
 
-            printQuantumCycle();
+
             
             cpuCycles++;
 
@@ -679,44 +812,16 @@ public:
         }
     }
 
-    void printQuantumCycle()
+
+    boolean isIdleCycle()
     {
-        int baseAddress;
-        int lastAddress;
-        // quantum cycle is counted only when there's a process in memory
-        if (memory->processInMemory.size() > 0) {
-
-            ofstream fileOPESY;
-            int totalExternalFrag = memory->processInMemory.size() * memoryPerProcess;
-            fileOPESY.open("memory_stamp_" + std::to_string(quantumCyclePrint) + ".txt");
-
-            fileOPESY << "Timestamp: " << getCurrentTimestamp() << std::endl;
-            fileOPESY << "Number of processes in memory: " << memory->processInMemory.size() << std::endl;
-            fileOPESY << "Total external fragmentation in KB: " << to_string(totalExternalFrag) << std::endl;
-
-            fileOPESY << "----end---- = " << memory->maxMemory << std::endl;
-            fileOPESY << std::endl;
-            
-            for (int i = 0; i < memory->processInMemory.size(); i++) {
-                            // +1 here
-                lastAddress = ((memory->processInMemory[i]->last_frame + 1) * numberOfMemoryPerFrame)-1; 
-                baseAddress = memory->processInMemory[i]->base_frame * numberOfMemoryPerFrame;
-                fileOPESY <<  lastAddress << std::endl;
-                fileOPESY << memory->processInMemory[i]->process_name << std::endl;
-                fileOPESY << baseAddress << std::endl;
-                fileOPESY << std::endl;
-
-            }
-            fileOPESY << "----start----- = " << 0 << std::endl;
-
-
-            fileOPESY.close();
-
-            quantumCyclePrint++;
+        for (int i = 0; i < listOfCoreThreads.size(); i++)
+        {
+            if (scheduler.coresAvailable[i] != nullptr) // there is a process to be executed
+                return false;
         }
+        return true;
     }
-
-
 
 
     void initialize() {
@@ -852,7 +957,7 @@ public:
                 if (cpuOption != "mem-per-frame")
                     throw std::invalid_argument("No option for mem-per-frame");
 
-                numberOfMemoryPerFrame = stoi(configInput);
+                memoryPerFrame = stoi(configInput);
 
 
 
@@ -864,17 +969,36 @@ public:
                 iss >> cpuOption >> configInput;
                 iss.clear();// clear stream
 
-                if (cpuOption != "mem-per-proc")
-                    throw std::invalid_argument("No option for mem-per-proc");
+                if (cpuOption != "min-mem-per-proc")
+                    throw std::invalid_argument("No option for min-mem-per-proc");
 
-                memoryPerProcess = stoi(configInput);
+                minMemPerProc = stoi(configInput);
+
+
+
+                // ------------------------
+                // 
+                // mem-per-proc
+                getline(readConfigFile, cpuOption);
+                iss.str(cpuOption);
+                iss >> cpuOption >> configInput;
+                iss.clear();// clear stream
+
+                if (cpuOption != "max-mem-per-proc")
+                    throw std::invalid_argument("No option for max-mem-per-proc");
+
+                maxMemPerProc = stoi(configInput);
 
 
 
                 // ------------------------
                 memory = make_shared<Memory>();
                 initializeCores(nCpuToInitialize, delayExec, quantumCycles, memory);
-                memory->initialize(maxMemory, numberOfMemoryPerFrame, memoryPerProcess);
+
+                if (maxMemory == memoryPerFrame)
+                    memory->initialize(maxMemory, memoryPerFrame, 0);
+                else
+                    memory->initialize(maxMemory, memoryPerFrame, 1);
       
                 if (scheduler.initialize_scheduler(schedulerType, memory)) // invalid config return 1
                     throw std::invalid_argument("Invalid scheduler option");
@@ -935,9 +1059,11 @@ public:
             std::random_device rd;
             std::mt19937 gen(rd());
             std::uniform_int_distribution<> dist(minCommand, maxCommand); // randomize the amount of commands
+            std::uniform_int_distribution<> mem(minMemPerProc, maxMemPerProc);
+            int generatedMemory = mem(gen);
 
             int pid = screens.size();
-            std::shared_ptr<Screen> screen = make_shared<Screen>(Screen(process_name, pid, 0, dist(gen), getCurrentTimestamp(), memoryPerProcess));
+            std::shared_ptr<Screen> screen = make_shared<Screen>(Screen(process_name, pid, 0, dist(gen), getCurrentTimestamp(), generatedMemory, ceil((generatedMemory * 1.0)/ memoryPerFrame)));
             screens.push_back(screen);
             scheduler.readyQueue.push_back(screen);
             initScreen(screen);
