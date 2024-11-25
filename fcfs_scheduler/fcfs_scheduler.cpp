@@ -198,24 +198,26 @@ public:
 
     void storeBackingStore() // already contains deallocate
     {
-        int index = 0; // find oldest process
-        // find a process to kick out
-        for (int i = 0; i < processInMemory.size(); i++)
-        {
-            if (processInMemory[index]->placed_in_memory > processInMemory[i]->placed_in_memory) // index is more recent than i
-                index = i;
-            
+        if (processInMemory.size() != 0) {
+            int index = 0; // find oldest process
+            // find a process to kick out
+            for (int i = 0; i < processInMemory.size(); i++)
+            {
+                if (processInMemory[index]->placed_in_memory > processInMemory[i]->placed_in_memory) // index is more recent than i
+                    index = i;
+
+            }
+
+            // store
+            ofstream fileOPESY;
+            fileOPESY.open(processInMemory[index]->process_name + ".txt");
+            fileOPESY.close();
+
+            // bring back frames
+            deallocate(processInMemory[index]);
+
+            numPagedOut++;
         }
-
-        // store
-        ofstream fileOPESY;
-        fileOPESY.open(processInMemory[index]->process_name + ".txt");
-        fileOPESY.close();
-
-        // bring back frames
-        deallocate(processInMemory[index]);
-
-        numPagedOut++;
 
         
     }
@@ -298,13 +300,13 @@ public:
         while (!isProcessAllocated)
         {
             
-            if (screen->frames_needed >= availableFrames.size())
+            if (availableFrames.size() >= screen->frames_needed)
             {
                 // take available frames
                 for (int i = 0; i < screen->frames_needed; i++)
                     screen->pages.push_back(availableFrames[i]);
 
-                availableFrames.erase(availableFrames.begin() + 0, availableFrames.begin() + (screen->frames_needed - 1)); // recheck on this
+                availableFrames.erase(availableFrames.begin() + 0, availableFrames.begin() + screen->frames_needed); // recheck on this
                 processInMemory.push_back(screen);
                 screen->placed_in_memory = std::time(nullptr);
                 isProcessAllocated = true;
