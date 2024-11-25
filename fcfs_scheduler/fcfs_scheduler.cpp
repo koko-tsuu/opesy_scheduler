@@ -189,10 +189,12 @@ public:
 
     void allocate(std::shared_ptr<Screen> screen)
     {
-        if (type == 0)
-            allocateFlatMemory(screen);
-        else
-            allocateFrames(screen);
+        if (!checkIfProcessExistsInMemory(screen)) {
+            if (type == 0)
+                allocateFlatMemory(screen);
+            else
+                allocateFrames(screen);
+        }
 
     }
 
@@ -240,12 +242,20 @@ public:
 
     void deallocate(std::shared_ptr<Screen> screen)
     {
-        if (type == 0)
-            deallocateFlatMemory(screen);
-        else
-            deallocateFrames(screen);
+        try {
+            if (checkIfProcessExistsInMemory(screen)) {
+                if (type == 0)
+                    deallocateFlatMemory(screen);
+                else
+                    deallocateFrames(screen);
 
-
+            }
+            else
+                throw;
+        }
+        catch (exception e) {
+            std::cout << "Tried to deallocate a process that does not exist: " << e.what() << std::endl;
+        }
     }
 
 
@@ -319,6 +329,16 @@ public:
             
         }
 
+    }
+
+    boolean checkIfProcessExistsInMemory(std::shared_ptr<Screen> screen)
+    {
+        for (int i = 0; i < processInMemory.size(); i++)
+        {
+            if (processInMemory[i] == screen)
+                return true;
+        }
+        return false;
     }
 
     int getMemoryUsage()
@@ -728,7 +748,7 @@ public:
                 else if (command == "vmstat") {
                     int memoryUsage = memory->getMemoryUsage();
                     int freeMemory = memory->maxMemory - memoryUsage;
-
+                    std::cout << std::endl;
                     std::cout << memory->maxMemory << " total memory" << std::endl;
                     std::cout << memoryUsage << " used memory" << std::endl;
                     std::cout << freeMemory << " free memory" << std::endl;
@@ -737,6 +757,7 @@ public:
                     std::cout << cpuCycles << " total CPU ticks" << std::endl;
                     std::cout << memory->numPagedIn << " num paged in" << std::endl;
                     std::cout << memory->numPagedOut << " num paged out" << std::endl;
+                    std::cout << std::endl;
 
                     }
                 else {
@@ -821,7 +842,7 @@ public:
     {
         for (int i = 0; i < listOfCoreThreads.size(); i++)
         {
-            if (scheduler.coresAvailable[i] != nullptr) // there is a process to be executed
+            if (scheduler.coresAvailable[i]->process_to_execute != nullptr) // there is a process to be executed
                 return false;
         }
         return true;
@@ -850,7 +871,8 @@ public:
                 iss.clear(); // clear stream
                     
                 if (cpuOption != "num-cpu")
-                    throw;
+                    throw std::invalid_argument("No option for num-cpu");
+
 
                 int nCpuToInitialize = stoi(configInput);
                 // to initialize cores after delay-per-exec is received
