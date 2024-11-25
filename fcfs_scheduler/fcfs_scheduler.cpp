@@ -326,6 +326,8 @@ public:
         {
             total += processInMemory[i]->memory_to_occupy;
         }
+
+        return total;
     }
 
   
@@ -791,7 +793,7 @@ public:
             scheduler.run_scheduler();
 
             // to see if this is an idle cycle, check if all cores have process
-            if (isIdleCycle)
+            if (isIdleCycle())
                 idleCycles++;
             else
                 activeCycles++;

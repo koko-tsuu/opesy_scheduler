@@ -1,3 +1,4 @@
 *
 !.gitignore
 !fcfs_scheduler.cpp
+!fcfs_scheduler
