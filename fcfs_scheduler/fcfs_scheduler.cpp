@@ -242,20 +242,15 @@ public:
 
     void deallocate(std::shared_ptr<Screen> screen)
     {
-        try {
-            if (checkIfProcessExistsInMemory(screen)) {
-                if (type == 0)
-                    deallocateFlatMemory(screen);
-                else
-                    deallocateFrames(screen);
-
-            }
+   
+        if (checkIfProcessExistsInMemory(screen)) {
+            if (type == 0)
+                deallocateFlatMemory(screen);
             else
-                throw;
+                deallocateFrames(screen);
+
         }
-        catch (exception e) {
-            std::cout << "Tried to deallocate a process that does not exist: " << e.what() << std::endl;
-        }
+       
     }
 
 
